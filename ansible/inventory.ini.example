@@ -1,0 +1,13 @@
+[hunters]
+# Copy to inventory.ini and replace these addresses/usernames.
+# alpine_lab ansible_host=127.0.0.1 ansible_port=2222 ansible_user=defender
+# ubuntu ansible_host=10.10.10.10 ansible_user=defender
+# rocky ansible_host=10.10.10.11 ansible_user=defender
+# suse ansible_host=10.10.10.12 ansible_user=defender
+# arch ansible_host=10.10.10.13 ansible_user=defender
+
+[hunters:vars]
+ansible_connection=ssh
+ansible_become=true
+ansible_become_method=sudo
+ansible_ssh_common_args='-o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no'

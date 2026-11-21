@@ -1,0 +1,45 @@
+name: ccdc-practice
+services:
+  web:
+    build: ./web
+    environment:
+      DB_HOST: db
+      DB_NAME: practice
+      DB_USER: practice
+      DB_PASSWORD: practice-lab-only
+    ports:
+      - "127.0.0.1:18080:80"
+      - "127.0.0.1:12222:22"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [front, data]
+  db:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: root-lab-only
+      MARIADB_DATABASE: practice
+      MARIADB_USER: practice
+      MARIADB_PASSWORD: practice-lab-only
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - database:/var/lib/mysql
+    networks: [data]
+  dns:
+    build: ./alpine
+    ports:
+      - "127.0.0.1:15353:53/udp"
+      - "127.0.0.1:15353:53/tcp"
+      - "127.0.0.1:12223:22"
+    networks: [front]
+networks:
+  front:
+    internal: true
+  data:
+    internal: true
+volumes:
+  database:

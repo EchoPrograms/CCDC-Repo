@@ -1,0 +1,260 @@
+#!/bin/sh
+# Jump-box runner for https://github.com/Foister150/coordinate-foister
+# Coordinate owns SSH/authentication. Targets receive one standalone POSIX script.
+set -eu
+umask 077
+unset ENV BASH_ENV CDPATH
+REPO=$(CDPATH= cd -P "$(dirname "$0")/.." && pwd)
+usage() {
+    cat <<'HELP'
+Usage: ./coordinate/ctl [setup|hunt|rootkit|harden|watch] --targets HOSTS --user USER [options] [-- SCRIPT_ARGS...]
+       ./coordinate/ctl [setup|hunt|rootkit|harden|watch] --config FILE [--targets HOSTS] [options]
+       ./coordinate/ctl install [--source DIR | --binary FILE]
+
+Default phase: setup only. Hunt, rootkit and harden must be selected explicitly.
+Missing Coordinate is built locally automatically (requires git and Go 1.26.3+).
+  --targets HOSTS       Coordinate DNS/IP list, range or CIDR
+  --user USER          SSH username (password prompted by Coordinate)
+  --port PORT          SSH port (default 22)
+  --config FILE        Explicit Coordinate credential JSON; replaces --user/--key
+  --key FILE           SSH private key instead of password authentication
+  --agent              Use ssh-agent instead of password authentication
+  --binary PATH        Coordinate executable (default: coordinate in PATH)
+  --state-dir /PATH    Remote backup/baseline store (default /.x86)
+  --output-dir DIR     Local private run parent (default: reports/coordinate)
+  --timeout SECONDS    Per-host script deadline (default 3600)
+  --transfer-timeout N File transfer deadline (default 900, maximum 86400)
+  --max-hosts N        Concurrent hosts (default 10, maximum 4096)
+  --color MODE         auto, always or never; saved reports remain plain text
+  --arch ARCH          Collector target: amd64 (default), arm64, 386 or arm
+  --watch-config FILE  Local manifest for watch install
+  --prepare-only       Generate a reviewable payload without connecting
+  -h, --help           Show this help
+
+Arguments after -- go only to the selected hunter script, quoted literally.
+Use --state-dir above; remote --root, --output and --color overrides are rejected.
+Passwords never go in the command line. Execution and collection each prompt;
+use --config for reusable/per-host credentials or --key/--agent for key auth.
+HELP
+}
+die() { printf 'hunter-coordinate: %s\n' "$*" >&2; exit 2; }
+if [ "${1:-}" = install ]; then shift; exec sh "$REPO/coordinate/install.sh" "$@"; fi
+PHASE=setup
+case ${1:-} in setup|hunt|rootkit|harden|watch) PHASE=$1; shift ;; esac
+TARGETS= USERNAME= CONFIG= KEY= AGENT=no BINARY=coordinate STATE=/.x86
+OUTPUT=$REPO/reports/coordinate
+PORT=22 TIMEOUT=3600 TRANSFER_TIMEOUT=900 MAX_HOSTS=10 COLOR=auto PREPARE=no ARCH=amd64 WATCH_CONFIG=
+CR=$(printf '\r')
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        -h|--help) usage; exit 0 ;;
+        --prepare-only) PREPARE=yes; shift ;;
+        --agent) AGENT=yes; shift ;;
+        --) shift; break ;;
+        --targets|--user|--port|--config|--key|--binary|--state-dir|--output-dir|--timeout|--transfer-timeout|--max-hosts|--color|--arch|--watch-config)
+            [ "$#" -ge 2 ] && [ -n "$2" ] || die "Missing value for $1"
+            case $2 in *'
+'*|*"$CR"*) die 'Option values must be on one line' ;; esac
+            case $1 in
+                --targets) TARGETS=$2 ;; --user) USERNAME=$2 ;; --port) PORT=$2 ;;
+                --config) CONFIG=$2 ;; --key) KEY=$2 ;; --binary) BINARY=$2 ;;
+                --state-dir) STATE=$2 ;; --output-dir) OUTPUT=$2 ;;
+                --timeout) TIMEOUT=$2 ;; --transfer-timeout) TRANSFER_TIMEOUT=$2 ;;
+                --max-hosts) MAX_HOSTS=$2 ;; --color) COLOR=$2 ;;
+                --arch) ARCH=$2 ;; --watch-config) WATCH_CONFIG=$2 ;;
+            esac
+            shift 2 ;;
+        *) die "Unknown option or phase: $1 (try --help)" ;;
+    esac
+done
+number() {
+    case $2 in ''|*[!0-9]*) die "$1 must be a positive integer" ;; esac
+    # Reject huge numbers before shell arithmetic and canonicalize leading zeros.
+    [ "${#2}" -le 6 ] || die "$1 is too large"
+    n=$(printf '%s\n' "$2" | sed 's/^0*//'); n=${n:-0}
+    [ "$n" -ge 1 ] && [ "$n" -le "$3" ] || die "$1 must be between 1 and $3"
+    printf '%s\n' "$n"
+}
+PORT=$(number --port "$PORT" 65535)
+TIMEOUT=$(number --timeout "$TIMEOUT" 86400)
+TRANSFER_TIMEOUT=$(number --transfer-timeout "$TRANSFER_TIMEOUT" 86400)
+MAX_HOSTS=$(number --max-hosts "$MAX_HOSTS" 4096)
+case $COLOR in auto|always|never) ;; *) die '--color must be auto, always or never' ;; esac
+case $ARCH in amd64|arm64|386|arm) ;; *) die '--arch must be amd64, arm64, 386 or arm' ;; esac
+if [ -n "$CONFIG" ]; then
+    [ -z "$USERNAME$KEY" ] && [ "$AGENT" = no ] || die '--config cannot be combined with --user, --key or --agent'
+    [ -f "$CONFIG" ] && [ -r "$CONFIG" ] || die 'Credential config is not a readable file'
+else
+    [ -n "$TARGETS" ] && [ -n "$USERNAME" ] || die '--targets and --user are required without --config'
+fi
+[ -z "$KEY" ] || { [ "$AGENT" = no ] && [ -f "$KEY" ] && [ -r "$KEY" ]; } || die 'Use one readable --key file or --agent'
+case $STATE in /*) ;; *) die '--state-dir must be absolute' ;; esac
+STATE=${STATE%/}
+case $STATE in ''|*'|'*|*'\'*|*'//'*) die 'Invalid state directory' ;; esac
+case /$STATE/ in */../*|*/./*) die 'State directory must not contain . or .. components' ;; esac
+
+# Validate the selected phase before making local files or attempting any SSH.
+# This also prevents accidental report redirection or changing phase via arguments.
+validate_args() {
+    while [ "$#" -gt 0 ]; do
+        case $PHASE:$1 in
+            setup:--no-install|setup:--snapshot-only|setup:--require-immutable|harden:--dry-run|harden:--skip-core|harden:--skip-apache|harden:--no-refresh|hunt:--install-tools|rootkit:--apply|rootkit:--userspace-only|rootkit:--disable-modules-until-reboot) shift ;;
+            setup:--backup-root|hunt:--scan-root|hunt:--web-root|hunt:--baseline|rootkit:--quarantine-preload)
+                [ "$#" -ge 2 ] && [ -n "$2" ] || die "Missing value for $1"
+                case $2 in /*) ;; *) die "$1 needs an absolute remote path" ;; esac
+                case $2 in *'
+'*|*"$CR"*|*'\'*|*'|'*) die 'Unsupported characters in remote path' ;; esac
+                case /$2/ in */../*) die 'Remote paths must not contain .. components' ;; esac
+                shift 2 ;;
+            *) die "Unsupported argument for $PHASE: $1 (use --help)" ;;
+        esac
+    done
+}
+if [ "$PHASE" = watch ]; then
+    action=${1:-status}
+    case $action in install|check|status|enable-recovery|disable-recovery) ;; *) die 'Invalid watch action' ;; esac
+    if [ "$#" -gt 0 ]; then shift; fi
+    if [ "$action" = enable-recovery ]; then
+        [ "$#" = 2 ] && [ "$1" = --owner ] && { [ "$2" = local ] || [ "$2" = wazuh ]; } || die 'Watch enable-recovery requires --owner local|wazuh'
+        set -- "$action" "$@"
+    else
+        [ "$#" = 0 ] || die 'Unexpected watch arguments'
+        set -- "$action"
+    fi
+    if [ "$action" = install ]; then [ -n "$WATCH_CONFIG" ] && [ -f "$WATCH_CONFIG" ] && [ ! -L "$WATCH_CONFIG" ] && [ -r "$WATCH_CONFIG" ] || die 'Watch install needs --watch-config FILE';
+    else [ -z "$WATCH_CONFIG" ] || die '--watch-config is only for watch install'; fi
+else
+    [ -z "$WATCH_CONFIG" ] || die '--watch-config is only for watch install'
+    validate_args "$@"
+fi
+
+absolute_file() {
+    file_dir=$(CDPATH= cd -P "$(dirname "$1")" && pwd) || return 1
+    printf '%s/%s\n' "$file_dir" "$(basename "$1")"
+}
+[ -z "$KEY" ] || KEY=$(absolute_file "$KEY")
+if [ "$PHASE" = watch ]; then
+    COLLECTOR=$REPO/watchdog/bin/hunter-watch-linux-$ARCH
+    if [ ! -x "$COLLECTOR" ] || { [ -f "$COLLECTOR.source" ] && [ "$(cksum < "$REPO/watchdog/watch.go")" != "$(cat "$COLLECTOR.source")" ]; }; then sh "$REPO/watchdog/build.sh" "$ARCH"; fi
+    command -v base64 >/dev/null 2>&1 || die 'base64 is required'
+fi
+if [ "$PHASE" = rootkit ]; then
+    COLLECTOR=$REPO/rootkit/bin/hunter-rootkit-linux-$ARCH
+    rebuild=no
+    if [ ! -x "$COLLECTOR" ]; then rebuild=yes
+    elif [ -f "$COLLECTOR.source" ] && [ "$(cksum < "$REPO/rootkit/collector.go")" != "$(cat "$COLLECTOR.source")" ]; then rebuild=yes; fi
+    if [ "$rebuild" = yes ]; then sh "$REPO/rootkit/build.sh" "$ARCH"; fi
+    command -v base64 >/dev/null 2>&1 || die 'base64 is needed on the jump box to bundle the rootkit collector'
+fi
+if [ "$PREPARE" = no ]; then
+    if [ "$BINARY" = coordinate ]; then
+        if [ -x "$REPO/coordinate/bin/coordinate" ]; then BINARY=$REPO/coordinate/bin/coordinate
+        elif ! command -v coordinate >/dev/null 2>&1; then
+            printf 'Coordinate is missing; installing the jump-box executable locally...\n'
+            sh "$REPO/coordinate/install.sh" || die 'Coordinate installation failed; retry ./coordinate/ctl install or provide --binary PATH'
+            BINARY=$REPO/coordinate/bin/coordinate
+        fi
+    fi
+    BINARY=$(command -v "$BINARY") || die 'Coordinate executable was not found; run ./coordinate/ctl install or provide --binary PATH'
+    BINARY=$(absolute_file "$BINARY")
+    [ -x "$BINARY" ] || die 'Coordinate binary is not executable'
+fi
+
+# Private, unique working directory also isolates upstream config.json/env.json.
+[ ! -L "$OUTPUT" ] || die 'Output parent must not be a symlink'
+mkdir -p "$OUTPUT"
+OUTPUT=$(CDPATH= cd -P "$OUTPUT" && pwd)
+RUN=$(mktemp -d "$OUTPUT/$PHASE-$(date -u '+%Y%m%dT%H%M%SZ').XXXXXXXXXX")
+chmod 700 "$RUN"
+ID=${RUN##*/}
+REMOTE=/tmp/hunter-coordinate-$ID
+PAYLOAD=$RUN/payload.sh
+CONFIG_COPY=no
+cleanup() {
+    [ "$CONFIG_COPY" = no ] || rm -f "$RUN/config.json"
+}
+trap cleanup 0
+trap 'exit 130' 1 2 15
+if [ -n "$CONFIG" ]; then
+    CONFIG_COPY=yes
+    cp "$CONFIG" "$RUN/config.json"
+    chmod 600 "$RUN/config.json"
+fi
+DISPLAY_COLOR=no
+if [ "$COLOR" = always ] || { [ "$COLOR" = auto ] && [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]; }; then DISPLAY_COLOR=yes; fi
+
+# Quote as shell data, never eval. A random checked heredoc carries exact source.
+quote() { printf "'"; printf '%s' "$1" | sed "s/'/'\\\\''/g"; printf "'"; }
+DELIMITER=HUNTER_SCRIPT_$(printf '%s' "$ID" | tr -c 'A-Za-z0-9' '_')
+if grep -Fx "$DELIMITER" "$REPO/hunter-$PHASE.sh" >/dev/null; then die 'Payload heredoc delimiter collision'; fi
+{
+    printf '#!/bin/sh\nPHASE='; quote "$PHASE"
+    printf '\nARTIFACTS='; quote "$REMOTE"
+    printf '\nSTATE='; quote "$STATE"
+    printf '\nDISPLAY_COLOR='; quote "$DISPLAY_COLOR"
+    printf '\nset --'
+    for arg do printf ' '; quote "$arg"; done
+    printf '\nwrite_script() {\ncat <<'; quote "$DELIMITER"; printf '\n'
+    cat "$REPO/hunter-$PHASE.sh"
+    printf '\n%s\n}\n' "$DELIMITER"
+    if [ "$PHASE" = rootkit ]; then
+        printf 'write_collector() {\nbase64 -d <<'; quote "${DELIMITER}_BINARY"; printf '\n'
+        base64 < "$COLLECTOR"
+        printf '\n%s\n}\n' "${DELIMITER}_BINARY"
+    fi
+    if [ "$PHASE" = watch ]; then
+        printf 'write_watch_collector() {\nbase64 -d <<'; quote "${DELIMITER}_WATCH_BINARY"; printf '\n'
+        base64 < "$COLLECTOR"
+        printf '\n%s\n}\n' "${DELIMITER}_WATCH_BINARY"
+        if [ -n "$WATCH_CONFIG" ]; then
+            printf 'write_watch_config() {\nbase64 -d <<'; quote "${DELIMITER}_WATCH_CONFIG"; printf '\n'
+            base64 < "$WATCH_CONFIG"
+            printf '\n%s\n}\n' "${DELIMITER}_WATCH_CONFIG"
+        fi
+    fi
+    cat "$REPO/coordinate/remote.sh"
+} > "$PAYLOAD"
+chmod 600 "$PAYLOAD"
+{
+    printf 'phase=%s\nremote_artifacts=%s\nstate_dir=%s\n' "$PHASE" "$REMOTE" "$STATE"
+    printf 'targets=%s\nport=%s\ntimeout=%s\n' "${TARGETS:-from-config}" "$PORT" "$TIMEOUT"
+} > "$RUN/run.txt"
+printf 'Phase: %s\nLocal run: %s\nRemote artifacts: %s\n' "$PHASE" "$RUN" "$REMOTE"
+if [ "$PREPARE" = yes ]; then
+    printf 'Prepared only; no SSH connections. Review: %s\n' "$PAYLOAD"
+    exit 0
+fi
+
+# Feature check fails before SSH; older builds may lack safe no-rsync transfers.
+"$BINARY" --help > "$RUN/coordinate-help.txt" 2>&1 || die 'Coordinate --help failed'
+for flag in --no-rsync --transfer-timeout --sudo --download --outfile-fmt --tmpdir; do
+    grep -F -e "$flag" "$RUN/coordinate-help.txt" >/dev/null || die "Coordinate lacks $flag; update to the current upstream build"
+done
+
+run_coordinate() (
+    cd "$RUN"
+    # Extra arguments here are generated internally, never arbitrary native flags.
+    if [ -n "$CONFIG" ]; then set -- --use-config "$@"
+    else
+        set -- --usernames "$USERNAME" "$@"
+        if [ -n "$KEY" ]; then set -- "--key=$KEY" "$@"
+        elif [ "$AGENT" = yes ]; then set -- --key "$@"; fi
+    fi
+    [ -z "$TARGETS" ] || set -- --targets "$TARGETS" "$@"
+    exec "$BINARY" --port "$PORT" --max-hosts "$MAX_HOSTS" --limit 1 \
+        --timeout "$TIMEOUT" --transfer-timeout "$TRANSFER_TIMEOUT" --no-rsync \
+        --tmpdir "$RUN/tmp" "$@"
+)
+EXEC_RC=0 FETCH_RC=0
+printf 'Executing %s only; Coordinate handles the SSH password prompt.\n' "$PHASE"
+run_coordinate --sudo --outfile-fmt '%i%/%s%.txt' "$PAYLOAD" || EXEC_RC=$?
+printf '\nCollecting full result files; password mode prompts again.\n'
+# Downloads precede scripts upstream, so this MUST be a separate invocation.
+# Always fetch partial evidence even when one or more hosts failed execution.
+run_coordinate --download "$REMOTE;artifacts" || FETCH_RC=$?
+printf 'execution_status=%s\ncollection_status=%s\n' "$EXEC_RC" "$FETCH_RC" >> "$RUN/run.txt"
+printf '\nResults: %s/output/downloads/\nExecution status: %s | Collection status: %s\n' "$RUN" "$EXEC_RC" "$FETCH_RC"
+if [ "$EXEC_RC" -ne 0 ] || [ "$FETCH_RC" -ne 0 ]; then
+    printf 'Some host operations failed. Retained partial results and remote artifacts: %s\n' "$REMOTE" >&2
+    exit 1
+fi

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Wazuh supplies one JSON request on stdin; the helper enforces its allowlist.
+exec /usr/local/libexec/hunter-watch respond

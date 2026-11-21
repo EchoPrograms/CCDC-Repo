@@ -1,0 +1,7 @@
+---
+- ansible.builtin.import_playbook: setup.yml
+  tags: [setup]
+- ansible.builtin.import_playbook: hunt.yml
+  tags: [never, hunt]
+- ansible.builtin.import_playbook: harden.yml
+  tags: [never, harden]

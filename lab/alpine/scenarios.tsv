@@ -1,0 +1,31 @@
+# id	area	mode	default	custom	location	finding title
+B00	sudo	baseline	baseline	baseline	/etc/sudoers.d/10-defender	Passwordless sudo grant
+SSH01	SSH keys	active	alert	alert	/home/defender/.ssh/authorized_keys	SSH forced command
+UID01	UID 0 user	dormant	alert	alert	/etc/passwd	Additional UID 0 account
+SUDO01	sudo	active	alert	alert	/etc/sudoers.d/90-support	Passwordless sudo grant
+SUID01	SUID shell	active	alert	alert	/usr/local/libexec/.rescue/bash	SUID shell
+SUID02	SUID permissions	active	alert	alert	/usr/local/libexec/.rescue/diagnostic	World-writable SUID
+CRON01	cron	active	alert	alert	/var/spool/cron/crontabs/root	temporary or shared-memory
+CRON02	cron	active	inventory	inventory	/var/spool/cron/crontabs/support	-
+SHELL01	shell startup	active	alert	alert	/home/defender/.bashrc	Alias overrides
+SHELL02	system profile	active	alert	alert	/etc/profile.d/20-session.sh	temporary or shared-memory
+INIT01	init.d / bind shell	active	alert	alert	/etc/init.d/network-check	Reverse shell or network-to-command
+RC01	rc.local	active	alert	alert	/etc/rc.local	temporary or shared-memory
+MOTD01	MOTD	active	alert	alert	/etc/update-motd.d/97-session	temporary or shared-memory
+APK01	APK commit hook	active	miss	miss	/etc/apk/commit_hooks.d/90-audit	-
+ACL01	ACL write	active	alert	alert	/etc/profile.d/40-service.sh	ACL grants access
+ACL02	ACL read	active	alert	alert	/etc/shadow	ACL grants access
+ACL03	ACL traverse	active	alert	alert	/root	ACL grants access
+WEB01	webshell	active	alert	alert	/var/www/html/assets/cache.php	Web request input
+WEB02	encoded webshell	active	alert	alert	/var/www/html/uploads/preview.php	Web request input
+WEB03	custom web root	active	miss	alert	/opt/customer/public/debug.php	Web request input
+LD01	process preload	active	alert	alert	/proc/	Process loader injection environment
+LD02	glibc preload file	fixture	alert	alert	/etc/ld.so.preload	System-wide dynamic loader preload
+PAM01	PAM permissive policy	dormant	alert	alert	/etc/pam.d/lab-recovery	PAM sufficient unconditional
+PAM02	PAM external hook	dormant	alert	alert	/etc/pam.d/lab-telemetry	PAM executes an external
+PAM03	PAM article artifact	fixture	alert	alert	/usr/include/type.h	PAM-backdoor article artifact
+APT01	APT hook	fixture	alert	alert	/etc/apt/apt.conf.d/99cache	APT command hook
+SYSTEMD01	systemd unit	fixture	alert	alert	/etc/systemd/system/cache-sync.service	temporary or shared-memory
+LKM01	kernel module file	fixture	alert	alert	/opt/.drivers/telemetry.ko	Kernel module outside
+LKM02	kernel log marker	fixture	alert	alert	/var/log/kern.log	Kernel log contains
+MOUNT01	hidden process mount	unsupported	skip	skip	-	-

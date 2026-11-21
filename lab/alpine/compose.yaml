@@ -1,0 +1,70 @@
+name: ccdc-alpine-practice
+services:
+  target:
+    image: ccdc-alpine-practice:local
+    build:
+      context: ../..
+      dockerfile: lab/alpine/Dockerfile
+      target: target
+    hostname: ccdc-alpine
+    init: true
+    environment:
+      LAB_PASSWORD: "${LAB_PASSWORD:-CCDC-Practice-2026!}"
+    networks: [practice]
+    tmpfs:
+      - /run:rw,nosuid,nodev,size=16m,mode=755
+    cap_drop:
+      - SYS_ADMIN
+      - SYS_MODULE
+      - SYS_PTRACE
+      - NET_ADMIN
+      - NET_RAW
+      - MKNOD
+      - SETFCAP
+    # no-new-privileges is deliberately absent: sudo and SUID are exercises.
+    pids_limit: 256
+    mem_limit: 512m
+    cpus: 1.0
+    stop_grace_period: 5s
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/lab-healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+  gateway:
+    image: ccdc-alpine-gateway:local
+    build:
+      context: ../..
+      dockerfile: lab/alpine/Dockerfile
+      target: gateway
+    init: true
+    depends_on:
+      target:
+        condition: service_healthy
+    networks: [access, practice]
+    ports:
+      - "127.0.0.1:${SSH_PORT:-2222}:2222"
+      - "127.0.0.1:${WEB_PORT:-8088}:8080"
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    sysctls:
+      net.ipv4.ip_forward: "0"
+    pids_limit: 64
+    mem_limit: 64m
+    cpus: 0.25
+    stop_grace_period: 3s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health.txt"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+networks:
+  practice:
+    driver: bridge
+    internal: true
+  access:
+    driver: bridge

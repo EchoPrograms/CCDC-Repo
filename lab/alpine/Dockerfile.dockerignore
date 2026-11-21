@@ -1,0 +1,12 @@
+**
+!ccdc-hunt.sh
+!hunter-hunt.sh
+!hunter-setup.sh
+!hunter-harden.sh
+!lab/
+!lab/alpine/
+!lab/alpine/Dockerfile
+!lab/alpine/Dockerfile.dockerignore
+!lab/alpine/*.sh
+!lab/alpine/*.c
+!lab/alpine/scenarios.tsv

@@ -1,0 +1,5 @@
+<!-- Add inside the agent's ossec_config. -->
+<localfile>
+  <log_format>json</log_format>
+  <location>/var/log/hunter-watch.jsonl</location>
+</localfile>

@@ -1,0 +1,28 @@
+---
+- name: Post-hunt core package recovery and security hardening
+  hosts: hunters
+  gather_facts: false
+  become: true
+  vars:
+    hunter_state_dir: /.x86
+    hunter_harden_args: []
+  tasks:
+    - name: Run standalone POSIX hardening (no target Python)
+      ansible.builtin.script:
+        cmd: >-
+          {{ (playbook_dir ~ '/../hunter-harden.sh') | quote }}
+          --state-dir {{ hunter_state_dir | quote }}
+          {{ hunter_harden_args | map('quote') | join(' ') }}
+        executable: /bin/sh
+      register: hunter_harden_result
+      changed_when: "'--dry-run' not in hunter_harden_args"
+      failed_when: false
+
+    - name: Show hardening status and private log location
+      ansible.builtin.debug:
+        msg: "{{ hunter_harden_result.stdout_lines | default([]) }}"
+
+    - name: Report any incomplete hardening operations
+      ansible.builtin.fail:
+        msg: "Hardening returned {{ hunter_harden_result.rc }}. Review the reported harden.log and errors.log."
+      when: hunter_harden_result.rc | int != 0

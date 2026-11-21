@@ -1,0 +1,67 @@
+---
+- name: Hunt persistence and retrieve a private report to the jump box
+  hosts: hunters
+  gather_facts: false
+  become: true
+  vars:
+    hunter_state_dir: /.x86
+    hunter_hunt_args: []
+    hunter_report_dir: "{{ playbook_dir }}/../reports"
+  tasks:
+    - name: Create a private remote report directory without target Python
+      ansible.builtin.raw: umask 077; mktemp -d /tmp/hunter-report.XXXXXXXX
+      register: hunter_remote_tmp
+      changed_when: true
+
+    - name: Remember remote report path
+      ansible.builtin.set_fact:
+        hunter_remote_report: "{{ hunter_remote_tmp.stdout | trim }}/report.txt"
+        hunter_local_name: "{{ inventory_hostname | regex_replace('[^A-Za-z0-9_.-]', '_') }}-{{ now(utc=true, fmt='%Y%m%dT%H%M%S%fZ') }}.txt"
+
+    - name: Run standalone POSIX hunter (no target Python)
+      ansible.builtin.script:
+        cmd: >-
+          {{ (playbook_dir ~ '/../hunter-hunt.sh') | quote }}
+          --state-dir {{ hunter_state_dir | quote }} --color never
+          -o {{ hunter_remote_report | quote }}
+          {{ hunter_hunt_args | map('quote') | join(' ') }}
+        executable: /bin/sh
+      register: hunter_scan
+      changed_when: false
+      no_log: true
+
+    - name: Read report through SSH using base64 (no target Python)
+      ansible.builtin.raw: "base64 < {{ hunter_remote_report | quote }}"
+      register: hunter_encoded_report
+      changed_when: false
+      no_log: true
+
+    - name: Create private report directory on jump box
+      ansible.builtin.file:
+        path: "{{ hunter_report_dir }}"
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+      become: false
+      vars:
+        ansible_become: false
+      run_once: true
+
+    - name: Save report on jump box
+      ansible.builtin.copy:
+        content: "{{ hunter_encoded_report.stdout | b64decode }}"
+        dest: "{{ hunter_report_dir }}/{{ hunter_local_name }}"
+        mode: '0600'
+        force: false
+      delegate_to: localhost
+      become: false
+      vars:
+        ansible_become: false
+      no_log: true
+
+    - name: Show counts and report locations
+      ansible.builtin.debug:
+        msg:
+          - "{{ hunter_scan.stdout_lines | select('match', '^CRITICAL=') | list }}"
+          - "Jump box: {{ hunter_report_dir }}/{{ hunter_local_name }}"
+          - "Target: {{ hunter_remote_report }}"

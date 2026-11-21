@@ -1,0 +1,22 @@
+---
+- name: Preserve evidence, configure logging, and refresh hunter snapshot
+  hosts: hunters
+  gather_facts: false
+  become: true
+  vars:
+    hunter_state_dir: /.x86
+    hunter_setup_args: []
+  tasks:
+    - name: Run standalone POSIX setup (no target Python)
+      ansible.builtin.script:
+        cmd: >-
+          {{ (playbook_dir ~ '/../hunter-setup.sh') | quote }}
+          --state-dir {{ hunter_state_dir | quote }}
+          {{ hunter_setup_args | map('quote') | join(' ') }}
+        executable: /bin/sh
+      register: hunter_setup_result
+      changed_when: true
+
+    - name: Show setup result and storage location
+      ansible.builtin.debug:
+        msg: "{{ hunter_setup_result.stdout_lines }}"

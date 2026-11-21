@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")"
+compose() { docker compose -f compose.yaml "$@"; }
+usage() {
+    cat <<'USAGE'
+Usage: ./ctl up|down|reset|status|score|verify|logs [service]|outage SERVICE|restore SERVICE
+Services for outage/restore: web, db, dns
+reset destroys the lab database and recreates the containers.
+USAGE
+}
+case "${1:-}" in
+up) compose up -d --build ;;
+down) compose down ;;
+reset) compose down --volumes --remove-orphans; compose up -d --build ;;
+status) compose ps ;;
+logs) shift; compose logs --tail=100 "$@" ;;
+outage)
+    case "${2:-}" in
+      web) compose exec -T web touch /tmp/site-offline ;;
+      db|dns) compose stop "$2" ;;
+      *) usage; exit 2 ;;
+    esac ;;
+restore)
+    case "${2:-}" in
+      web) compose exec -T web rm -f /tmp/site-offline ;;
+      db|dns) compose start "$2" ;;
+      *) usage; exit 2 ;;
+    esac ;;
+score|verify)
+    failed=0
+    if command -v curl >/dev/null 2>&1 && result=$(curl -fsS --max-time 8 -X POST http://127.0.0.1:18080/ 2>/dev/null) && printf '%s' "$result" | grep -q '"visit_id"'; then
+      printf 'web and database transaction: PASS %s\n' "$result"
+    else printf 'web and database transaction: FAIL\n'; failed=1; fi
+    if compose exec -T dns nslookup portal.ccdc.test 127.0.0.1 2>/dev/null | grep -q '192\.0\.2\.10'; then printf 'DNS: PASS\n'; else printf 'DNS: FAIL\n'; failed=1; fi
+    if compose exec -T web sh -c 'test -s /run/sshd.pid && kill -0 $(cat /run/sshd.pid)' >/dev/null 2>&1; then printf 'web SSH daemon: PASS\n'; else printf 'web SSH daemon: FAIL\n'; failed=1; fi
+    if compose exec -T dns sh -c 'test -s /run/sshd.pid && kill -0 $(cat /run/sshd.pid)' >/dev/null 2>&1; then printf 'DNS SSH daemon: PASS\n'; else printf 'DNS SSH daemon: FAIL\n'; failed=1; fi
+    exit "$failed" ;;
+*) usage; exit 2 ;;
+esac

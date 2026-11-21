@@ -1,0 +1,111 @@
+#!/bin/sh
+set -eu
+umask 077
+LABDIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
+compose() { docker compose --project-directory "$LABDIR" -f "$LABDIR/compose.yaml" "$@"; }
+published_port() {
+    endpoint=$(compose port gateway "$1") || {
+        printf 'Cannot find the lab gateway port. Run: %s up\n' "$0" >&2
+        return 1
+    }
+    case $endpoint in
+        127.0.0.1:*) port=${endpoint#127.0.0.1:} ;;
+        *) port= ;;
+    esac
+    case $port in
+        ''|*[!0-9]*) valid_port=no ;;
+        *)
+            if [ "${#port}" -le 5 ] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
+                valid_port=yes
+            else valid_port=no; fi ;;
+    esac
+    if [ "$valid_port" != yes ]; then
+        printf 'No valid localhost mapping for gateway port %s (Docker returned "%s").\nRun: %s up\n' "$1" "$endpoint" "$0" >&2
+        return 1
+    fi
+    printf '%s\n' "$port"
+}
+usage() {
+    cat <<'HELP'
+Usage: ./lab/alpine/ctl COMMAND
+  up                  Build and start the practice target; wait for SSH and HTTP.
+  ssh                 SSH as defender (password: CCDC-Practice-2026! by default).
+  hunt [--custom-web]  Run the hunter, copy its report locally, compare ground truth.
+  test                Check published SSH and live services, then grade both scans.
+  status              Show the target status.
+  logs                Show recent container startup logs.
+  reset               Replace this lab's containers, discarding target changes.
+  down                Stop and remove this lab's containers and networks.
+  config              Validate/render Compose without needing Docker access.
+
+All published ports bind to 127.0.0.1. Configure ports/password in lab/alpine/.env.
+Run from a host account with Docker access. No sudo or Python required by ctl.
+HELP
+}
+command=${1:---help}
+[ "$#" -eq 0 ] || shift
+case $command in
+    up)
+        [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+        compose up --build --detach --wait
+        ssh_port=$(published_port 2222)
+        web_port=$(published_port 8080)
+        printf '\nSSH: ssh -p %s defender@127.0.0.1\n' "$ssh_port"
+        printf 'Web: http://127.0.0.1:%s/\n' "$web_port"
+        printf 'Default password: CCDC-Practice-2026! (or LAB_PASSWORD from .env)\n'
+        printf 'Inside: sudo /opt/ccdc/ccdc-hunt.sh\n' ;;
+    ssh)
+        [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+        # The gateway publishes the ports; the vulnerable target stays internal.
+        port=$(published_port 2222)
+        mkdir -p "$LABDIR/.state"
+        exec ssh -F /dev/null -p "$port" -o UserKnownHostsFile="$LABDIR/.state/known_hosts" \
+            -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 defender@127.0.0.1 ;;
+    hunt)
+        profile=default
+        if [ "${1:-}" = --custom-web ]; then profile=custom; shift; fi
+        [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+        stamp=$(date -u +%Y%m%dT%H%M%SZ)
+        filename="hunt-$profile-$stamp-$$.txt"
+        mkdir -p "$LABDIR/reports"
+        if [ "$profile" = custom ]; then
+            compose exec -T target sh /opt/ccdc/ccdc-hunt.sh -o "/root/$filename" --web-root /opt/customer/public
+        else
+            compose exec -T target sh /opt/ccdc/ccdc-hunt.sh -o "/root/$filename"
+        fi
+        compose cp "target:/root/$filename" "$LABDIR/reports/$filename"
+        result=0
+        compose exec -T target sh /opt/lab/grade.sh "/root/$filename" "$profile" > "$LABDIR/reports/$filename.grade" || result=$?
+        cat "$LABDIR/reports/$filename.grade"
+        printf '\nSaved: %s\n' "$LABDIR/reports/$filename"
+        exit "$result" ;;
+    test)
+        [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+        port=$(published_port 2222)
+        if command -v ssh-keyscan >/dev/null 2>&1; then
+            mkdir -p "$LABDIR/.state"
+            if ssh-keyscan -T 3 -p "$port" 127.0.0.1 > "$LABDIR/.state/host-probe" 2>/dev/null && [ -s "$LABDIR/.state/host-probe" ]; then
+                printf 'PASS: SSH reachable through published localhost port %s\n' "$port"
+            else
+                printf 'FAIL: SSH port %s is not reachable from the host. Check: %s status\n' "$port" "$0" >&2
+                exit 1
+            fi
+        else printf 'SKIP: host SSH-port probe requires ssh-keyscan\n'; fi
+        compose exec -T target sh /opt/lab/verify.sh
+        "$0" hunt
+        "$0" hunt --custom-web ;;
+    status) compose ps "$@" ;;
+    logs) compose logs --tail=80 "$@" ;;
+    config) compose config "$@" ;;
+    reset)
+        [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+        compose up --build --detach --force-recreate --wait
+        # Remove only this lab wrapper's stale public host-key record.
+        if [ -f "$LABDIR/.state/known_hosts" ]; then rm "$LABDIR/.state/known_hosts"; fi
+        if [ -f "$LABDIR/.state/known_hosts.old" ]; then rm "$LABDIR/.state/known_hosts.old"; fi ;;
+    down)
+        [ "$#" -eq 0 ] || { usage >&2; exit 2; }
+        compose down ;;
+    -h|--help|help) usage ;;
+    *) usage >&2; exit 2 ;;
+esac

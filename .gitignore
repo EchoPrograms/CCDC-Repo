@@ -1,0 +1,23 @@
+# Lab source is portable; VM images, private state and generated output are local.
+lab/**/.state/
+lab/ccdc/vm-state/
+lab/**/*.qcow2
+lab/**/*.vmdk
+lab/**/*.raw
+lab/**/*.ext4
+lab/**/*.iso
+lab/**/*.log
+lab/**/.env
+reports/
+ansible/inventory.ini
+ccdc-hunt-*.txt
+coordinate/*.json
+coordinate/bin/
+coordinate/vendor/
+rootkit/bin/
+rootkit/.cache/
+ccdc-rootkit-*.txt
+watchdog/bin/
+watchdog/.cache/
+__pycache__/
+*.pyc

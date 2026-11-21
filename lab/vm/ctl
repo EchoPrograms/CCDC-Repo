@@ -1,0 +1,38 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/../.."
+base="$PWD/lab/vm/.state/aperture"
+disk="$base/Aperture Science Ubuntu/Aperture Science Ubuntu.vmdk"
+overlay="$base/practice.qcow2"
+usage() { echo 'Usage: lab/vm/ctl prep /path/to/archive.zip | start | recovery | status | stop | test'; }
+case "${1:-}" in
+prep)
+    [ "$#" -eq 2 ] || { usage; exit 2; }
+    archive=$2
+    mkdir -p "$base"
+    if [ -f "$disk" ]; then qemu-img info "$disk"; echo "Base already exists: $disk"; exit 0; fi
+    sh lab/vm/extract.sh "$archive" "$base"
+    qemu-img info "$disk"
+    ;;
+start|recovery)
+    [ -f "$disk" ] || { echo 'Run prep first.' >&2; exit 1; }
+    [ -f "$base/vmlinuz" ] && [ -f "$base/initrd" ] || { echo 'Extract guest kernel and initrd first; see README.' >&2; exit 1; }
+    [ ! -f "$base/qemu.pid" ] || { echo 'PID file exists; inspect status before starting.' >&2; exit 1; }
+    [ -f "$overlay" ] || qemu-img create -f qcow2 -F vmdk -b "$disk" "$overlay"
+    bootargs="root=/dev/vda2 rw console=ttyS0"
+    [ "$1" != recovery ] || bootargs="$bootargs init=/bin/bash"
+    exec qemu-system-x86_64 -machine q35,accel=tcg -m 3072 -smp 2 -kernel "$base/vmlinuz" -initrd "$base/initrd" -append "$bootargs" -drive "file=$overlay,format=qcow2,if=virtio" -nic none -display none -serial stdio -monitor none -pidfile "$base/qemu.pid"
+    ;;
+status)
+    if [ -s "$base/qemu.pid" ]; then
+      pid=$(cat "$base/qemu.pid")
+      case "$pid" in *[!0-9]*|'') echo 'Invalid PID file'; exit 1;; esac
+      if [ -r "/proc/$pid/cmdline" ] && tr '\000' '\n' < "/proc/$pid/cmdline" | grep -Fxq "file=$overlay,format=qcow2,if=virtio"; then echo "QEMU running: $pid"; exit 0; fi
+      echo "Stale or inaccessible PID file: $base/qemu.pid"; exit 1
+    fi
+    echo 'No managed VM PID file.'; exit 1 ;;
+stop)
+    if "$0" status; then kill "$(cat "$base/qemu.pid")"; else echo 'Refusing to signal an unverified process.' >&2; exit 1; fi ;;
+test) echo 'Run the manual guest validation procedure documented in lab/vm/README.md.' >&2; exit 1 ;;
+*) usage; exit 2 ;;
+esac
