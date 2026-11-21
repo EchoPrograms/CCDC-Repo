@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "Competition/Linux Hardening Checklist.md",
+                "file": "Competition/Webshell Hardening Checklist.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Linux Hardening Checklist"
+              "title": "Webshell Hardening Checklist"
             }
           }
         ]
@@ -99,7 +99,6 @@
             "state": {
               "type": "backlink",
               "state": {
-                "file": "Competition/Linux Hardening Checklist.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -118,7 +117,6 @@
             "state": {
               "type": "outgoing-link",
               "state": {
-                "file": "Competition/Linux Hardening Checklist.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               },
@@ -161,7 +159,7 @@
             "state": {
               "type": "outline",
               "state": {
-                "file": "Competition/Linux Hardening Checklist.md",
+                "file": "IR-Document.md",
                 "followCursor": false,
                 "showSearch": false,
                 "searchQuery": ""
@@ -190,10 +188,18 @@
   },
   "active": "2c2538b49f05f21a",
   "lastOpenFiles": [
-    "Hunter/Packet Capture - Wireshark and Injects.md",
-    "Competition/Firewall - Default Deny with iptables.md",
+    "Reference/Network Credential Checks.md",
+    "Competition/Webshell Hardening Checklist.md",
+    "IR-Document.md",
+    "Competition/Incident Response",
     "Competition/Starting Checklist.md",
     "00 CCDC Runbook.md",
+    "Competition/Host Notes/Host Notes Template.md",
+    "Competition/Host Notes",
+    "Competition/Firewall - Default Deny with iptables.md",
+    "Competition/Host Info Commands.md",
+    "Competition/Linux Hardening Checklist.md",
+    "Hunter/Packet Capture - Wireshark and Injects.md",
     "Reference/Watchdog Wazuh Configuration.md",
     "Reference/CCDC Service Practice Lab.md",
     "Hunter/Service Watchdogs and Alerts.md",
@@ -204,10 +210,6 @@
     "Hunter/Hunter Hunt - Persistence Triage.md",
     "Reference/References.md",
     "Reference/Tools - SnoopyOnSecurity.md",
-    "Competition/Webshell Hardening Checklist.md",
-    "Competition/Host Info Commands.md",
-    "Competition/Host Notes Template.md",
-    "Competition/Linux Hardening Checklist.md",
     "Coordinate - Jump Box.md",
     "Reference/Reference Hardening script.md",
     "Reference/PII Searcher.md",
@@ -216,8 +218,6 @@
     "Reference",
     "Hunter",
     "Competition",
-    "Alpine Practice Lab.md",
-    "Webshell Hardening Checklist.md",
-    "Tools - SnoopyOnSecurity.md"
+    "Alpine Practice Lab.md"
   ]
 }

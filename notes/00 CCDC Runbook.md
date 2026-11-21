@@ -54,6 +54,7 @@ Coordinate runs one script command per invocation. Its `hunt`, `rootkit` and `ha
 | Need | Open |
 | --- | --- |
 | Host details, kernel/package versions, ports and dependencies | [[Host Info Commands\|Copy-paste inventory commands]] |
+| Authorized SSH credential checks and protected accounts | [[Network Credential Checks\|Credential checks]] |
 | Service health, alerts and controlled recovery | [[Service Watchdogs and Alerts\|Watchdogs and Wazuh]] |
 | Packet evidence and inject analysis | [[Packet Capture - Wireshark and Injects\|PCAP and Wireshark]] |
 | Default-deny inbound/outbound service rules and SSH rollback | [[Firewall - Default Deny with iptables\|iptables firewall]] |

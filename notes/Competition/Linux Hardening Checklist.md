@@ -30,7 +30,7 @@ If `getent` is unavailable, inspect `/etc/passwd` and `/etc/group`; that misses 
 
 - [ ] Identify every UID 0 account, privileged group, sudo rule and unexpected shell-enabled service account.
 - [ ] Review authorized key fingerprints/options, `AuthorizedKeysCommand`, `ForceCommand`, `PermitUserEnvironment`, `Match` blocks and SSH rc hooks. Keep required scoring and administrative access.
-- [ ] Rotate OS **and application/database** passwords in a planned order. Update dependent clients and your credential store, then test a fresh login.
+- [ ] Rotate eligible OS **and application/database** passwords in a planned order. Exclude all do-not-touch and scored accounts from password changes, disabling and deletion; see [[Network Credential Checks]] for the protected list. Update dependent clients and your credential store, then test a fresh login.
 - [ ] Inspect PAM includes for unknown modules, `pam_exec`, `pam_permit` and control flags that bypass expected authentication. These names can have legitimate uses; check the actual chain.
 
 Locate key files by name without dumping private key contents:
